@@ -15,7 +15,7 @@ Baixe o `GameRoomPortatil-<versão>.apk` na [página de releases](https://github
 
 | App | GameRoom necessário |
 |---|---|
-| 0.1.x | 1.0.0 ou superior |
+| 0.1.x – 0.2.x | 1.0.0 ou superior |
 
 ## Como usar
 

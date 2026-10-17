@@ -1,38 +1,61 @@
 # GameRoom Portátil
 
-App Android para registrar, offline, o que você joga no portátil (Jogando, Zerado, Platinado, com data, horas, nota, dificuldade e observação) e levar esses registros para o [GameRoomLog](../GameRoomLog_Gravity) no PC.
+[![CI](https://github.com/FabricioPereira008/GameRoomApp/actions/workflows/ci.yml/badge.svg)](https://github.com/FabricioPereira008/GameRoomApp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/FabricioPereira008/GameRoomApp)](https://github.com/FabricioPereira008/GameRoomApp/releases/latest)
+![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
+[![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)](LICENSE)
 
-Os dois projetos só compartilham **um contrato JSON versionado**, cujo dono é o GameRoom (`docs/contracts/` lá). O app não conhece o banco nem a API interna do GameRoom.
+App Android complementar ao **[GameRoomLog](https://github.com/FabricioPereira008/GameRoomLog)**. Ele registra, offline, o que você joga no portátil (em viagem, por exemplo) e depois leva esses registros para o GameRoom no PC.
 
-## Fluxo
+O app **não** é uma cópia do GameRoom. Ele guarda só o essencial: título, plataforma, status, data, horas, nota, dificuldade e observação. Os dois projetos evoluem de forma independente e só compartilham um contrato JSON versionado.
 
-1. **(Opcional) Catálogo:** no GameRoom, *Configurações → App do Portátil → Exportar catálogo*. No app, *⋮ → Importar catálogo do GameRoom*. Assim o app sugere os títulos e plataformas que já existem no PC e vincula o jogo pelo id.
-2. **Registrar:** *Novo jogo* → título e plataforma (texto livre, com sugestões) → *Jogando / Zerado / Platinado*.
-3. **Exportar:** o botão de upload (ou *⋮ → Salvar/Compartilhar exportação*) gera `gameroom-inbox-AAAAMMDD-HHMM.json`. O arquivo sempre leva todos os registros; o GameRoom ignora os que já recebeu.
-4. **Importar no PC:** *Configurações → App do Portátil → Importar eventos do portátil*, depois revise cada jogo.
+## Download
 
-Editar um registro já exportado gera um UUID novo, então a correção chega ao GameRoom como um evento novo. Apagar no app não desfaz nada no GameRoom.
+Baixe o `GameRoomPortatil-<versão>.apk` na [página de releases](https://github.com/FabricioPereira008/GameRoomApp/releases/latest) e instale no aparelho (é preciso permitir a instalação de fontes desconhecidas). Requer Android 8.0 ou superior.
 
-## Build
+| App | GameRoom necessário |
+|---|---|
+| 0.1.x | 1.0.0 ou superior |
 
-Requer JDK 17 e Android SDK (platform 35).
+## Como usar
+
+1. **(Opcional) Catálogo:** no GameRoom, abra *Configurações → App do Portátil → Exportar catálogo para o portátil*. No app, toque em *⋮ → Importar catálogo do GameRoom*. O app passa a sugerir os títulos e plataformas que você já tem no PC.
+2. **Registrar:** toque em *Novo jogo*, informe título e plataforma, e registre *Jogando*, *Zerado* ou *Platinado*.
+3. **Exportar:** o botão de upload (ou *⋮ → Salvar/Compartilhar exportação*) gera um arquivo `gameroom-inbox-AAAAMMDD-HHMM.json`. Leve-o ao PC por Syncthing, Drive, cabo, e-mail…
+4. **Importar no PC:** em *Configurações → App do Portátil → Importar eventos do portátil*, revise cada jogo e aplique.
+
+Cada exportação leva todos os registros; o GameRoom ignora os que já recebeu, então reimportar não duplica nada. Editar um registro já exportado faz com que ele chegue como uma correção. Apagar no app não desfaz nada no GameRoom.
+
+## Contrato com o GameRoom
+
+O dono do contrato é o GameRoom ([`docs/contracts`](https://github.com/FabricioPereira008/GameRoomLog/tree/main/docs/contracts)):
+
+- `gameroom-inbox` v1: eventos que o app exporta.
+- `gameroom-catalog` v1: catálogo opcional que o GameRoom exporta para o app.
+
+Uma cópia dos schemas fica em `app/src/test/resources/contracts/`, e os testes validam a exportação do app contra ela. Quando o contrato mudar no GameRoom, rode `./scripts/sync-contracts.sh` e os testes. Regras: campos novos são opcionais, campos desconhecidos são ignorados, e `version` só sobe em mudanças incompatíveis.
+
+## Desenvolvimento
+
+Kotlin, Jetpack Compose (Material 3), Room e kotlinx.serialization. Requer JDK 17 e Android SDK (platform 35).
 
 ```sh
-export JAVA_HOME=~/.local/jdk-17 ANDROID_HOME=~/Android/Sdk
-./gradlew testDebugUnitTest        # testes (inclui validação contra os schemas do GameRoom)
-./gradlew assembleRelease          # APK em app/build/outputs/apk/release/
+export JAVA_HOME=/caminho/do/jdk-17 ANDROID_HOME=~/Android/Sdk
+./gradlew testDebugUnitTest   # testes unitários e de contrato
+./gradlew assembleRelease     # APK em app/build/outputs/apk/release/
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-O APK de release é assinado com a chave de debug (uso pessoal, instalação direta).
+O APK de release é assinado com a chave de debug local (uso pessoal, instalação direta). Atualizações precisam da mesma chave (`~/.android/debug.keystore`).
 
-## Contrato
+```
+app/src/main/java/com/gameroom/portatil/
+├── contract/   DTOs e (de)serialização dos formatos do GameRoom
+├── domain/     tipos de evento, regra de UUID na edição, sugestões, números
+├── data/       Room (jogos, eventos, catálogo) e repositório
+└── ui/         telas Compose
+```
 
-`app/src/test/resources/contracts/` é uma cópia dos schemas do GameRoom. Quando o GameRoom mudar o contrato, rode `./scripts/sync-contracts.sh` e os testes. Regras: campos novos são opcionais, campos desconhecidos são ignorados, e `version` só sobe em mudanças incompatíveis.
+## Licença
 
-## Estrutura
-
-- `contract/`: DTOs e (de)serialização dos formatos `gameroom-inbox` e `gameroom-catalog`
-- `domain/`: tipos de evento, regra de UUID na edição, sugestões e parsing de números
-- `data/`: Room (jogos, eventos, catálogo) e repositório (exportação/importação)
-- `ui/`: Compose (lista de jogos, jogo com registros, editores)
+[MIT](LICENSE)

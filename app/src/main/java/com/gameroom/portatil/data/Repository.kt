@@ -33,6 +33,10 @@ fun buildInboxPackage(games: List<GameWithEvents>, now: Long): InboxPackageDto =
     },
 )
 
+/** Registros que ainda não saíram do app (os que o próximo envio torna "exportados"). */
+fun pendingEventIds(games: List<GameWithEvents>): List<Long> =
+    games.flatMap { g -> g.events.filter { it.exportedAt == null }.map { it.id } }
+
 class Repository(private val db: AppDatabase) {
     private val games = db.games()
     private val catalog = db.catalog()
@@ -76,14 +80,22 @@ class Repository(private val db: AppDatabase) {
         games.event(eventId)?.let { games.deleteEvent(it) }
     }
 
-    /** JSON pronto para salvar/compartilhar e os ids a marcar como exportados depois de entregue. */
+    /**
+     * JSON pronto para salvar/compartilhar (sempre com todos os registros) e os ids dos ainda não
+     * exportados, a marcar só depois que o arquivo for entregue.
+     */
     suspend fun exportPackage(now: Long = System.currentTimeMillis()): Pair<String, List<Long>> {
         val all = games.allGamesWithEvents()
-        return encodeInbox(buildInboxPackage(all, now)) to all.flatMap { g -> g.events.map { it.id } }
+        return encodeInbox(buildInboxPackage(all, now)) to pendingEventIds(all)
     }
 
     suspend fun markExported(ids: List<Long>, now: Long = System.currentTimeMillis()) {
         if (ids.isNotEmpty()) games.markExported(ids, now)
+    }
+
+    /** Desfaz um markExported (ex.: o envio pelo app escolhido no compartilhar não foi concluído). */
+    suspend fun unmarkExported(ids: List<Long>) {
+        if (ids.isNotEmpty()) games.unmarkExported(ids)
     }
 
     /** Substitui o catálogo local; devolve quantos jogos vieram. */

@@ -21,7 +21,7 @@ Baixe o `GameRoomPortatil-<versão>.apk` na [página de releases](https://github
 
 1. **(Opcional) Catálogo:** no GameRoom, abra *Configurações → App do Portátil → Exportar catálogo para o portátil*. No app, toque em *⋮ → Importar catálogo do GameRoom*. O app passa a sugerir os títulos e plataformas que você já tem no PC.
 2. **Registrar:** toque em *Novo jogo*, informe título e plataforma, e registre *Jogando*, *Zerado* ou *Platinado*.
-3. **Exportar:** o botão de upload (ou *⋮ → Salvar/Compartilhar exportação*) gera um arquivo `gameroom-inbox-AAAAMMDD-HHMM.json`. Leve-o ao PC por Syncthing, Drive, cabo, e-mail…
+3. **Exportar:** o botão de upload oferece *Salvar arquivo* ou *Compartilhar* e gera um arquivo `gameroom-inbox-AAAAMMDD-HHMM.json`. Leve-o ao PC por Syncthing, Drive, cabo, e-mail…
 4. **Importar no PC:** em *Configurações → App do Portátil → Importar eventos do portátil*, revise cada jogo e aplique.
 
 Cada exportação leva todos os registros; o GameRoom ignora os que já recebeu, então reimportar não duplica nada. Editar um registro já exportado faz com que ele chegue como uma correção. Apagar no app não desfaz nada no GameRoom.

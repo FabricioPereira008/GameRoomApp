@@ -50,6 +50,9 @@ interface GameDao {
     @Query("UPDATE events SET exportedAt = :now WHERE id IN (:ids)")
     suspend fun markExported(ids: List<Long>, now: Long)
 
+    @Query("UPDATE events SET exportedAt = NULL WHERE id IN (:ids)")
+    suspend fun unmarkExported(ids: List<Long>)
+
     @Query("SELECT DISTINCT platform FROM games WHERE platform IS NOT NULL")
     fun localPlatforms(): Flow<List<String>>
 }

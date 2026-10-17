@@ -18,6 +18,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Avisa qual app foi escolhido no menu de compartilhar (cancelar não dispara nada) -->
+        <receiver
+            android:name=".ui.ShareChosenReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

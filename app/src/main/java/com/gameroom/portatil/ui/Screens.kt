@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -39,12 +41,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -92,6 +98,24 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
+    var exportChoice by remember { mutableStateOf(false) }
+    // Registros enviados ao menu de compartilhar, aguardando a escolha de um app
+    var awaitingShare by remember { mutableStateOf<List<Long>?>(null) }
+
+    LaunchedEffect(Unit) {
+        ShareEvents.chosen.collect { appLabel ->
+            val ids = awaitingShare ?: return@collect
+            awaitingShare = null
+            vm.repo.markExported(ids)
+            val res = snackbar.showSnackbar(
+                if (ids.isEmpty()) "Enviado via $appLabel (nenhum registro novo)."
+                else "Enviado via $appLabel. ${ids.size} registro(s) marcados como exportados.",
+                actionLabel = if (ids.isEmpty()) null else "Desfazer",
+                duration = SnackbarDuration.Long,
+            )
+            if (res == SnackbarResult.ActionPerformed) vm.repo.unmarkExported(ids)
+        }
+    }
 
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch { exportTo(context, vm, uri, snackbar) }
@@ -113,7 +137,7 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(enabled = games.isNotEmpty(), onClick = { saveLauncher.launch(exportFileName()) }) {
+                    IconButton(enabled = games.isNotEmpty(), onClick = { exportChoice = true }) {
                         BadgedBox(badge = { if (pending > 0) Badge { Text("$pending") } }) {
                             Icon(Icons.Default.Upload, "Exportar para o GameRoom")
                         }
@@ -121,14 +145,6 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
                     Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "Mais opções") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Salvar exportação…") }, enabled = games.isNotEmpty(),
-                                onClick = { menuOpen = false; saveLauncher.launch(exportFileName()) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Compartilhar exportação…") }, enabled = games.isNotEmpty(),
-                                onClick = { menuOpen = false; scope.launch { shareExport(context, vm, snackbar) } },
-                            )
                             DropdownMenuItem(
                                 text = { Text(if (catalogSize > 0) "Atualizar catálogo do GameRoom ($catalogSize)…" else "Importar catálogo do GameRoom…") },
                                 onClick = { menuOpen = false; catalogLauncher.launch(arrayOf("application/json", "*/*")) },
@@ -161,10 +177,63 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
         }
     }
 
+    if (exportChoice) {
+        ExportDialog(
+            pending = pending,
+            onDismiss = { exportChoice = false },
+            onSave = { exportChoice = false; saveLauncher.launch(exportFileName()) },
+            onShare = {
+                exportChoice = false
+                scope.launch { awaitingShare = shareExport(context, vm, snackbar) }
+            },
+        )
+    }
+
     if (creating) {
         GameEditorDialog(null, titleOptions, platformOptions, onDismiss = { creating = false }) { title, platform, catalogId ->
             creating = false
             vm.addGame(title, platform, catalogId, onOpenGame)
+        }
+    }
+}
+
+@Composable
+private fun ExportDialog(pending: Int, onDismiss: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Upload, null) },
+        title = { Text("Exportar para o GameRoom") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    (if (pending > 0) "$pending registro(s) novo(s) desde a última exportação. " else "Nenhum registro novo. ") +
+                        "O arquivo leva todos os registros; o GameRoom ignora os que já recebeu.",
+                    style = MaterialTheme.typography.bodyMedium, color = Tokens.textMuted,
+                )
+                ExportOption(Icons.Default.SaveAlt, "Salvar arquivo",
+                    "Grava em uma pasta à sua escolha: Downloads, Syncthing, Drive…", onSave)
+                ExportOption(Icons.Default.Share, "Compartilhar",
+                    "Envia por um app: Telegram, e-mail, Quick Share… Os registros só contam como exportados se você escolher um app.", onShare)
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+@Composable
+private fun ExportOption(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Tokens.surface2),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Tokens.accent)
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)
+            }
         }
     }
 }
@@ -312,12 +381,14 @@ private suspend fun exportTo(context: Context, vm: AppViewModel, uri: Uri, snack
         ids.size
     }
     snackbar.showSnackbar(result.fold(
-        { "$it registro(s) exportado(s). Importe em Configurações → App do Portátil." },
+        { if (it > 0) "Arquivo salvo com $it registro(s) novo(s). Importe em Configurações → App do Portátil."
+          else "Arquivo salvo (nenhum registro novo desde a última exportação)." },
         { "Falha ao exportar: ${it.message}" },
     ))
 }
 
-private suspend fun shareExport(context: Context, vm: AppViewModel, snackbar: SnackbarHostState) {
+/** Abre o menu de compartilhar e devolve os ids a marcar quando um app for escolhido (null em caso de erro). */
+private suspend fun shareExport(context: Context, vm: AppViewModel, snackbar: SnackbarHostState): List<Long>? {
     val result = runCatching {
         val (json, ids) = vm.repo.exportPackage()
         val file = withContext(Dispatchers.IO) {
@@ -329,10 +400,11 @@ private suspend fun shareExport(context: Context, vm: AppViewModel, snackbar: Sn
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(send, "Enviar para o GameRoom"))
-        vm.repo.markExported(ids)
+        context.startActivity(Intent.createChooser(send, "Enviar para o GameRoom", ShareEvents.chooserCallback(context)))
+        ids
     }
     result.exceptionOrNull()?.let { snackbar.showSnackbar("Falha ao compartilhar: ${it.message}") }
+    return result.getOrNull()
 }
 
 private suspend fun importCatalog(context: Context, vm: AppViewModel, uri: Uri, snackbar: SnackbarHostState) {

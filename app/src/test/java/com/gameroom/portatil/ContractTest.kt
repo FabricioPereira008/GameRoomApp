@@ -8,6 +8,7 @@ import com.gameroom.portatil.data.EventEntity
 import com.gameroom.portatil.data.GameEntity
 import com.gameroom.portatil.data.GameWithEvents
 import com.gameroom.portatil.data.buildInboxPackage
+import com.gameroom.portatil.data.pendingEventIds
 import com.gameroom.portatil.domain.EventType
 import com.networknt.schema.JsonSchemaFactory
 import com.networknt.schema.SpecVersion
@@ -100,5 +101,21 @@ class ContractTest {
     @Test(expected = CatalogFormatException::class)
     fun rejectsGarbage() {
         decodeCatalog("não é json")
+    }
+
+    @Test
+    fun onlyNotYetExportedEventsAreMarkedAfterDelivery() {
+        val games = listOf(
+            GameWithEvents(hk, listOf(
+                EventEntity(id = 1, uuid = "a", gameId = 1, type = EventType.PLAYING, date = LocalDate.of(2026, 10, 1), exportedAt = 100L),
+                EventEntity(id = 2, uuid = "b", gameId = 1, type = EventType.FINISHED, date = LocalDate.of(2026, 10, 12)),
+            )),
+            GameWithEvents(dc, listOf(
+                EventEntity(id = 3, uuid = "c", gameId = 2, type = EventType.PLATINUM, date = LocalDate.of(2026, 10, 15)),
+            )),
+        )
+        assertEquals(listOf(2L, 3L), pendingEventIds(games))
+        // o arquivo continua levando todos os registros
+        assertEquals(3, buildInboxPackage(games, now = 0).events.size)
     }
 }

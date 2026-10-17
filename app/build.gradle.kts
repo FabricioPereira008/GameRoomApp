@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,14 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
+
+// Chave de release fora do repositório: -Pgameroomapp.signing=<arquivo> ou ~/.android/gameroomapp-release.properties.
+// Sem ela (CI, outra máquina), o release é assinado com a chave de debug.
+val signingFile = file(
+    (findProperty("gameroomapp.signing") as String?)
+        ?: "${System.getProperty("user.home")}/.android/gameroomapp-release.properties"
+)
+val releaseSigning = Properties().apply { if (signingFile.exists()) signingFile.inputStream().use { load(it) } }
 
 android {
     namespace = "com.gameroom.portatil"
@@ -18,11 +28,21 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (releaseSigning.isNotEmpty()) {
+            create("release") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Uso pessoal: assina com a chave de debug para instalar direto no portátil
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {

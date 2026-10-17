@@ -46,7 +46,16 @@ export JAVA_HOME=/caminho/do/jdk-17 ANDROID_HOME=~/Android/Sdk
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-O APK de release é assinado com a chave de debug local (uso pessoal, instalação direta). Atualizações precisam da mesma chave (`~/.android/debug.keystore`).
+O build de release é assinado com a chave definida em `~/.android/gameroomapp-release.properties` (ou em `-Pgameroomapp.signing=<arquivo>`):
+
+```properties
+storeFile=/caminho/gameroomapp-release.jks
+storePassword=...
+keyAlias=gameroomapp
+keyPassword=...
+```
+
+Sem esse arquivo, o release é assinado com a chave de debug, que só serve para testes. Os APKs publicados nas releases usam sempre a mesma chave de release, porque o Android só instala uma atualização por cima se a assinatura for igual.
 
 ```
 app/src/main/java/com/gameroom/portatil/

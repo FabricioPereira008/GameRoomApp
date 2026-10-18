@@ -22,7 +22,7 @@ jobs:
         run: ./gradlew lintDebug
       - name: Build dos APKs (o release usa a chave de debug aqui; o R8 é exercitado do mesmo jeito)
         run: ./gradlew assembleDebug assembleRelease
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reports

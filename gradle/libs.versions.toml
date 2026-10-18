@@ -11,7 +11,7 @@ room = "2.8.5"
 serialization = "1.11.0"
 coroutines = "1.11.0"
 junit = "4.13.2"
-jsonSchema = "1.5.9"
+jsonSchema = "3.0.8"
 robolectric = "4.17"
 androidxTest = "1.7.0"
 

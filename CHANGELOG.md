@@ -5,7 +5,7 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
-## [Não publicado]
+## [0.3.0] - 2026-10-18
 ### Adicionado
 - **Platinado com data do zeramento:** o registro de Platinado tem a data da platina e a do zeramento (sugerida a partir do último zeramento registrado). Quando são dias diferentes, o GameRoom recebe um Zerado e depois o Platinado.
 - Opção **Incluir os já exportados** na exportação, para reenviar um arquivo perdido.

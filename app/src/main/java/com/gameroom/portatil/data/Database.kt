@@ -1,10 +1,12 @@
 package com.gameroom.portatil.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -31,6 +33,7 @@ interface GameDao {
     suspend fun game(id: Long): GameEntity?
 
     @Insert suspend fun insertGame(game: GameEntity): Long
+    @Insert suspend fun insertEvents(events: List<EventEntity>)
     @Update suspend fun updateGame(game: GameEntity)
     @Delete suspend fun deleteGame(game: GameEntity)
 
@@ -47,6 +50,10 @@ interface GameDao {
     @Query("SELECT COUNT(*) FROM events WHERE exportedAt IS NULL")
     fun pendingCount(): Flow<Int>
 
+    /** Quando foi criado o registro pendente mais antigo (null = nada pendente). */
+    @Query("SELECT MIN(COALESCE(pendingSince, createdAt)) FROM events WHERE exportedAt IS NULL")
+    fun oldestPendingCreatedAt(): Flow<Long?>
+
     @Query("UPDATE events SET exportedAt = :now WHERE id IN (:ids)")
     suspend fun markExported(ids: List<Long>, now: Long)
 
@@ -55,6 +62,16 @@ interface GameDao {
 
     @Query("SELECT DISTINCT platform FROM games WHERE platform IS NOT NULL")
     fun localPlatforms(): Flow<List<String>>
+
+    /** Desfaz vínculos com jogos que sumiram do catálogo (o id poderia passar a ser de outro jogo no GameRoom). */
+    @Query("UPDATE games SET catalogGameId = NULL WHERE catalogGameId IS NOT NULL AND catalogGameId NOT IN (SELECT id FROM catalog_games)")
+    suspend fun clearMissingCatalogLinks(): Int
+
+    @Transaction
+    suspend fun restore(game: GameWithEvents) {
+        insertGame(game.game)
+        insertEvents(game.events)
+    }
 }
 
 @Dao
@@ -65,21 +82,27 @@ interface CatalogDao {
     @Query("SELECT name FROM catalog_platforms ORDER BY name")
     fun platforms(): Flow<List<String>>
 
+    @Query("SELECT * FROM catalog_meta WHERE id = 0")
+    fun meta(): Flow<CatalogMetaEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun setMeta(meta: CatalogMetaEntity)
+
     @Query("DELETE FROM catalog_games") suspend fun clearGames()
     @Query("DELETE FROM catalog_platforms") suspend fun clearPlatforms()
     @Insert suspend fun insertGames(games: List<CatalogGameEntity>)
     @Insert suspend fun insertPlatforms(platforms: List<CatalogPlatformEntity>)
 
     @Transaction
-    suspend fun replace(games: List<CatalogGameEntity>, platforms: List<CatalogPlatformEntity>) {
-        clearGames(); clearPlatforms(); insertGames(games); insertPlatforms(platforms)
+    suspend fun replace(games: List<CatalogGameEntity>, platforms: List<CatalogPlatformEntity>, meta: CatalogMetaEntity) {
+        clearGames(); clearPlatforms(); insertGames(games); insertPlatforms(platforms); setMeta(meta)
     }
 }
 
 @Database(
-    entities = [GameEntity::class, EventEntity::class, CatalogGameEntity::class, CatalogPlatformEntity::class],
-    version = 1,
+    entities = [GameEntity::class, EventEntity::class, CatalogGameEntity::class, CatalogPlatformEntity::class, CatalogMetaEntity::class],
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],  // 2: zeramento do Platinado, pendingSince, catalog_meta
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -87,9 +110,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun catalog(): CatalogDao
 
     companion object {
+        const val NAME = "gameroom-portatil.db"
         @Volatile private var instance: AppDatabase? = null
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "gameroom-portatil.db")
+            instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)
                 .build().also { instance = it }
         }
     }

@@ -3,6 +3,8 @@ package com.gameroom.portatil
 import com.gameroom.portatil.domain.EventDraft
 import com.gameroom.portatil.domain.EventIdentity
 import com.gameroom.portatil.domain.EventType
+import com.gameroom.portatil.domain.SuggestIndex
+import com.gameroom.portatil.domain.finishDateValid
 import com.gameroom.portatil.domain.formatNumber
 import com.gameroom.portatil.domain.identityAfterEdit
 import com.gameroom.portatil.domain.parseDecimal
@@ -52,7 +54,32 @@ class DomainTest {
         assertTrue(parseDecimal("11", 10.0).isFailure)
         assertTrue(parseDecimal("-1").isFailure)
         assertTrue(parseDecimal("abc").isFailure)
+        // não finitos travariam a serialização do pacote inteiro
+        assertTrue(parseDecimal("NaN").isFailure)
+        assertTrue(parseDecimal("Infinity").isFailure)
+        assertTrue(parseDecimal("-Infinity", 10.0).isFailure)
         assertEquals("38", formatNumber(38.0))
         assertEquals("9,5", formatNumber(9.5))
+    }
+
+    @Test
+    fun finishDateOnlyKeptOnPlatinumAndWhenOnAnotherDay() {
+        val d = LocalDate.of(2026, 10, 20)
+        val earlier = d.minusDays(4)
+        assertEquals(earlier, EventDraft(EventType.PLATINUM, d, finishDate = earlier).normalized().finishDate)
+        assertNull(EventDraft(EventType.PLATINUM, d, finishDate = d).normalized().finishDate)
+        assertNull(EventDraft(EventType.FINISHED, d, finishDate = earlier).normalized().finishDate)
+        assertTrue(finishDateValid(earlier, d))
+        assertTrue(finishDateValid(d, d))
+        assertTrue(!finishDateValid(d.plusDays(1), d))
+    }
+
+    @Test
+    fun suggestIndexIsReusableAcrossQueries() {
+        val index = SuggestIndex(listOf("Pokémon Scarlet", "Pokemon Violet", "Celeste", "celeste"))
+        assertEquals(listOf("Pokemon Violet", "Pokémon Scarlet"), index.query("poke"))
+        assertEquals(listOf("Celeste"), index.query("cel"))  // duplicata sem acento/caixa sai
+        assertEquals(emptyList<String>(), index.query("celeste"))  // igual ao digitado não é sugestão
+        assertEquals(emptyList<String>(), index.query("  "))
     }
 }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup automático do Android até a versão 11: o banco com os jogos e registros (o cache de exportação fica de fora). -->
+<full-backup-content>
+    <include domain="database" path="." />
+</full-backup-content>

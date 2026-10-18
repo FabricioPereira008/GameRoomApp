@@ -1,14 +1,12 @@
 package com.gameroom.portatil.ui
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +31,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,11 +49,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,17 +60,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gameroom.portatil.data.EventEntity
 import com.gameroom.portatil.data.GameWithEvents
 import com.gameroom.portatil.domain.EventType
 import com.gameroom.portatil.domain.formatNumber
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+import java.time.Duration
 
 fun statusColor(type: EventType?): Color = when (type) {
     EventType.PLAYING -> Tokens.warning
@@ -82,47 +76,44 @@ fun statusColor(type: EventType?): Color = when (type) {
     null -> Tokens.textMuted
 }
 
-private fun exportFileName(): String =
-    "gameroom-inbox-${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"))}.json"
+/** A partir de quantos dias o pendente mais antigo vira um alerta na tela inicial. */
+private const val STALE_PENDING_DAYS = 7
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
-    val games by vm.games.collectAsState()
-    val pending by vm.pendingCount.collectAsState()
-    val titleOptions by vm.titleOptions.collectAsState()
-    val platformOptions by vm.platformOptions.collectAsState()
-    val catalogSize by vm.catalogSize.collectAsState()
+    val games by vm.games.collectAsStateWithLifecycle()
+    val pending by vm.pendingCount.collectAsStateWithLifecycle()
+    val titleOptions by vm.titleOptions.collectAsStateWithLifecycle()
+    val platformOptions by vm.platformOptions.collectAsStateWithLifecycle()
+    val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val oldestPending by vm.oldestPendingCreatedAt.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
     var exportChoice by remember { mutableStateOf(false) }
-    // Registros enviados ao menu de compartilhar, aguardando a escolha de um app
-    var awaitingShare by remember { mutableStateOf<List<Long>?>(null) }
+    var includeExported by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        ShareEvents.chosen.collect { appLabel ->
-            val ids = awaitingShare ?: return@collect
-            awaitingShare = null
-            vm.repo.markExported(ids)
+        launch { vm.shareIntents.collect { context.startActivity(it) } }
+        vm.messages.collect { msg ->
             val res = snackbar.showSnackbar(
-                if (ids.isEmpty()) "Enviado via $appLabel (nenhum registro novo)."
-                else "Enviado via $appLabel. ${ids.size} registro(s) marcados como exportados.",
-                actionLabel = if (ids.isEmpty()) null else "Desfazer",
+                msg.text,
+                actionLabel = if (msg.undo != null) "Desfazer" else null,
                 duration = SnackbarDuration.Long,
             )
-            if (res == SnackbarResult.ActionPerformed) vm.repo.unmarkExported(ids)
+            if (res == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         }
     }
 
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch { exportTo(context, vm, uri, snackbar) }
+        if (uri != null) vm.saveExport(uri, includeExported)
     }
     val catalogLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch { importCatalog(context, vm, uri, snackbar) }
+        if (uri != null) vm.importCatalog(uri)
     }
+    val pendingDays = oldestPending?.let { Duration.ofMillis(System.currentTimeMillis() - it).toDays() } ?: 0
 
     Scaffold(
         topBar = {
@@ -130,9 +121,15 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
                 title = {
                     Column {
                         Text("GameRoom Portátil")
+                        // Sem backup no PC, desinstalar o app perde os pendentes: avisa quando estão parados há dias
+                        val stale = pending > 0 && pendingDays >= STALE_PENDING_DAYS
                         Text(
-                            if (pending > 0) "$pending registro(s) a exportar" else "Tudo exportado",
-                            style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted,
+                            when {
+                                pending == 0 -> "Tudo exportado"
+                                stale -> "$pending registro(s) a exportar há $pendingDays dias"
+                                else -> "$pending registro(s) a exportar"
+                            },
+                            style = MaterialTheme.typography.bodySmall, color = if (stale) Tokens.warning else Tokens.textMuted,
                         )
                     }
                 },
@@ -146,7 +143,17 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "Mais opções") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
-                                text = { Text(if (catalogSize > 0) "Atualizar catálogo do GameRoom ($catalogSize)…" else "Importar catálogo do GameRoom…") },
+                                text = {
+                                    Column {
+                                        Text(if (catalog.games > 0) "Atualizar catálogo do GameRoom…" else "Importar catálogo do GameRoom…")
+                                        if (catalog.games > 0) {
+                                            Text(
+                                                "${catalog.games} jogos" + (catalog.exportedAt?.let { " · de ${it.format(dateFormat)}" } ?: ""),
+                                                style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted,
+                                            )
+                                        }
+                                    }
+                                },
                                 onClick = { menuOpen = false; catalogLauncher.launch(arrayOf("application/json", "*/*")) },
                             )
                         }
@@ -180,17 +187,16 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
     if (exportChoice) {
         ExportDialog(
             pending = pending,
+            includeExported = includeExported,
+            onIncludeExportedChange = { includeExported = it },
             onDismiss = { exportChoice = false },
             onSave = { exportChoice = false; saveLauncher.launch(exportFileName()) },
-            onShare = {
-                exportChoice = false
-                scope.launch { awaitingShare = shareExport(context, vm, snackbar) }
-            },
+            onShare = { exportChoice = false; vm.shareExport(includeExported) },
         )
     }
 
     if (creating) {
-        GameEditorDialog(null, titleOptions, platformOptions, onDismiss = { creating = false }) { title, platform, catalogId ->
+        GameEditorDialog(null, titleOptions, platformOptions, hasExportedEvents = false, onDismiss = { creating = false }) { title, platform, catalogId ->
             creating = false
             vm.addGame(title, platform, catalogId, onOpenGame)
         }
@@ -198,7 +204,14 @@ fun HomeScreen(vm: AppViewModel, onOpenGame: (Long) -> Unit) {
 }
 
 @Composable
-private fun ExportDialog(pending: Int, onDismiss: () -> Unit, onSave: () -> Unit, onShare: () -> Unit) {
+internal fun ExportDialog(
+    pending: Int,
+    includeExported: Boolean,
+    onIncludeExportedChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Upload, null) },
@@ -206,10 +219,21 @@ private fun ExportDialog(pending: Int, onDismiss: () -> Unit, onSave: () -> Unit
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    (if (pending > 0) "$pending registro(s) novo(s) desde a última exportação. " else "Nenhum registro novo. ") +
-                        "O arquivo leva todos os registros; o GameRoom ignora os que já recebeu.",
+                    if (pending > 0) "$pending registro(s) novo(s) desde a última exportação."
+                    else "Nenhum registro novo desde a última exportação.",
                     style = MaterialTheme.typography.bodyMedium, color = Tokens.textMuted,
                 )
+                Row(
+                    Modifier.fillMaxWidth().clickable { onIncludeExportedChange(!includeExported) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = includeExported, onCheckedChange = onIncludeExportedChange)
+                    Column {
+                        Text("Incluir os já exportados", style = MaterialTheme.typography.bodyMedium)
+                        Text("Para reenviar um arquivo perdido; o GameRoom ignora o que já recebeu.",
+                            style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)
+                    }
+                }
                 ExportOption(Icons.Default.SaveAlt, "Salvar arquivo",
                     "Grava em uma pasta à sua escolha: Downloads, Syncthing, Drive…", onSave)
                 ExportOption(Icons.Default.Share, "Compartilhar",
@@ -262,12 +286,17 @@ private fun GameCard(item: GameWithEvents, onClick: () -> Unit) {
     }
 }
 
+/** Resultado da busca do jogo; `item` null = o jogo não existe (apagado, ou id antigo no histórico). */
+private class GameLoad(val item: GameWithEvents?)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameScreen(vm: AppViewModel, gameId: Long, onBack: () -> Unit) {
-    val item by vm.game(gameId).collectAsState(initial = null)
-    val titleOptions by vm.titleOptions.collectAsState()
-    val platformOptions by vm.platformOptions.collectAsState()
+    val load by remember(gameId) { vm.game(gameId).map(::GameLoad) }.collectAsStateWithLifecycle(initialValue = null)
+    val item = load?.item
+    val titleOptions by vm.titleOptions.collectAsStateWithLifecycle()
+    val platformOptions by vm.platformOptions.collectAsStateWithLifecycle()
+    LaunchedEffect(load) { if (load != null && load?.item == null) onBack() }
     var editingGame by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var newEventType by remember { mutableStateOf<EventType?>(null) }
@@ -296,7 +325,7 @@ fun GameScreen(vm: AppViewModel, gameId: Long, onBack: () -> Unit) {
                 Text(game?.platform ?: "Sem plataforma", color = Tokens.textMuted)
                 Spacer(Modifier.padding(4.dp))
                 Text("Registrar", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     EventType.entries.forEach { t ->
                         AssistChip(onClick = { newEventType = t }, label = { Text(t.label, color = statusColor(t)) })
                     }
@@ -310,7 +339,8 @@ fun GameScreen(vm: AppViewModel, gameId: Long, onBack: () -> Unit) {
     }
 
     if (editingGame && game != null) {
-        GameEditorDialog(game, titleOptions, platformOptions, onDismiss = { editingGame = false }) { title, platform, catalogId ->
+        val hasExported = item.events.any { it.exportedAt != null }
+        GameEditorDialog(game, titleOptions, platformOptions, hasExported, onDismiss = { editingGame = false }) { title, platform, catalogId ->
             editingGame = false
             vm.updateGame(game.id, title, platform, catalogId)
         }
@@ -319,7 +349,15 @@ fun GameScreen(vm: AppViewModel, gameId: Long, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Apagar “${game.title}”?") },
-            text = { Text("Todos os registros deste jogo serão apagados do app. O que já foi exportado continua no GameRoom.") },
+            text = {
+                val unsent = item.pendingCount
+                Text(
+                    if (unsent > 0) "$unsent registro(s) deste jogo ainda não foram exportados e serão perdidos. " +
+                        "O que já foi exportado continua no GameRoom."
+                    else "Todos os registros deste jogo serão apagados do app. O que já foi exportado continua no GameRoom.",
+                    color = if (unsent > 0) Tokens.warning else Color.Unspecified,
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; vm.deleteGame(game.id); onBack() }) { Text("Apagar", color = Tokens.danger) }
             },
@@ -327,13 +365,13 @@ fun GameScreen(vm: AppViewModel, gameId: Long, onBack: () -> Unit) {
         )
     }
     newEventType?.let { type ->
-        EventEditorDialog(type, null, onDismiss = { newEventType = null }, onSave = {
+        EventEditorDialog(type, null, item?.lastFinishDate(), onDismiss = { newEventType = null }, onSave = {
             newEventType = null
             vm.saveEvent(gameId, null, it)
         }, onDelete = null)
     }
     editingEvent?.let { ev ->
-        EventEditorDialog(ev.type, ev, onDismiss = { editingEvent = null }, onSave = {
+        EventEditorDialog(ev.type, ev, item?.lastFinishDate(exceptEventId = ev.id), onDismiss = { editingEvent = null }, onSave = {
             editingEvent = null
             vm.saveEvent(gameId, ev.id, it)
         }, onDelete = { editingEvent = null; vm.deleteEvent(ev.id) })
@@ -358,6 +396,9 @@ private fun EventCard(ev: EventEntity, onClick: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
+            ev.finishDate?.let {
+                Text("Zerado em ${it.format(dateFormat)}", color = Tokens.textMuted, style = MaterialTheme.typography.bodySmall)
+            }
             val stats = listOfNotNull(
                 ev.playedHours?.let { "${formatNumber(it)}h" },
                 ev.score?.let { "nota ${formatNumber(it)}" },
@@ -368,52 +409,3 @@ private fun EventCard(ev: EventEntity, onClick: () -> Unit) {
         }
     }
 }
-
-// --- exportação / catálogo (I/O fora da thread principal) ---
-
-private suspend fun exportTo(context: Context, vm: AppViewModel, uri: Uri, snackbar: SnackbarHostState) {
-    val result = runCatching {
-        val (json, ids) = vm.repo.exportPackage()
-        withContext(Dispatchers.IO) {
-            context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-        }
-        vm.repo.markExported(ids)
-        ids.size
-    }
-    snackbar.showSnackbar(result.fold(
-        { if (it > 0) "Arquivo salvo com $it registro(s) novo(s). Importe em Configurações → App do Portátil."
-          else "Arquivo salvo (nenhum registro novo desde a última exportação)." },
-        { "Falha ao exportar: ${it.message}" },
-    ))
-}
-
-/** Abre o menu de compartilhar e devolve os ids a marcar quando um app for escolhido (null em caso de erro). */
-private suspend fun shareExport(context: Context, vm: AppViewModel, snackbar: SnackbarHostState): List<Long>? {
-    val result = runCatching {
-        val (json, ids) = vm.repo.exportPackage()
-        val file = withContext(Dispatchers.IO) {
-            File(context.cacheDir, "exports").apply { mkdirs() }.resolve(exportFileName()).apply { writeText(json) }
-        }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "application/json"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(send, "Enviar para o GameRoom", ShareEvents.chooserCallback(context)))
-        ids
-    }
-    result.exceptionOrNull()?.let { snackbar.showSnackbar("Falha ao compartilhar: ${it.message}") }
-    return result.getOrNull()
-}
-
-private suspend fun importCatalog(context: Context, vm: AppViewModel, uri: Uri, snackbar: SnackbarHostState) {
-    val result = runCatching {
-        val text = withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
-        }
-        vm.repo.importCatalog(text)
-    }
-    snackbar.showSnackbar(result.fold({ "Catálogo importado: $it jogos." }, { it.message ?: "Falha ao importar o catálogo." }))
-}
-

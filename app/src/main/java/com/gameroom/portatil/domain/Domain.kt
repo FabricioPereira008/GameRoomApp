@@ -16,7 +16,10 @@ enum class EventType(val wire: String, val label: String, val hasStats: Boolean)
     }
 }
 
-/** Dados editáveis de um evento (formulário). */
+/**
+ * Dados editáveis de um evento (formulário). `date` é o dia do evento (no Platinado, o da platina);
+ * `finishDate` só existe no Platinado, quando o zeramento foi em outro dia.
+ */
 data class EventDraft(
     val type: EventType,
     val date: LocalDate,
@@ -24,11 +27,20 @@ data class EventDraft(
     val score: Double? = null,
     val difficulty: Double? = null,
     val notes: String? = null,
+    val finishDate: LocalDate? = null,
 ) {
     /** Jogando não leva estatísticas (elas pertencem ao zeramento/platina). */
-    fun normalized(): EventDraft = if (type.hasStats) copy(notes = notes?.trim()?.ifEmpty { null })
-    else copy(playedHours = null, score = null, difficulty = null, notes = notes?.trim()?.ifEmpty { null })
+    fun normalized(): EventDraft {
+        val base = copy(
+            notes = notes?.trim()?.ifEmpty { null },
+            finishDate = finishDate?.takeIf { type == EventType.PLATINUM && it != date },
+        )
+        return if (type.hasStats) base else base.copy(playedHours = null, score = null, difficulty = null)
+    }
 }
+
+/** O zeramento não pode ser depois da platina. */
+fun finishDateValid(finishDate: LocalDate, platinumDate: LocalDate): Boolean = !finishDate.isAfter(platinumDate)
 
 data class EventIdentity(val uuid: String, val exportedAt: Long?)
 
@@ -42,23 +54,38 @@ fun identityAfterEdit(current: EventIdentity, newUuid: () -> String = { UUID.ran
 fun foldText(text: String): String =
     Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().trim()
 
-/** Sugestões que contêm o texto digitado (sem acento/caixa), começos primeiro, sem duplicatas. */
-fun suggest(query: String, options: Collection<String>, limit: Int = 6): List<String> {
-    val q = foldText(query)
-    if (q.isEmpty()) return emptyList()
-    return options.asSequence()
-        .distinctBy { foldText(it) }
-        .filter { val f = foldText(it); f.contains(q) && f != q }
-        .sortedWith(compareBy({ !foldText(it).startsWith(q) }, { it.length }, { it }))
-        .take(limit)
+/**
+ * Opções já normalizadas (sem acento/caixa) uma única vez: o catálogo pode ter milhares de jogos e
+ * a busca roda a cada tecla.
+ */
+class SuggestIndex(options: Collection<String>) {
+    private val entries: List<Pair<String, String>> = options.asSequence()
+        .map { it to foldText(it) }
+        .distinctBy { it.second }
         .toList()
+
+    /** Opções que contêm o texto digitado, começos primeiro, sem a que já é igual ao texto. */
+    fun query(query: String, limit: Int = 6): List<String> {
+        val q = foldText(query)
+        if (q.isEmpty()) return emptyList()
+        return entries.asSequence()
+            .filter { (_, f) -> f.contains(q) && f != q }
+            .sortedWith(compareBy({ !it.second.startsWith(q) }, { it.first.length }, { it.first }))
+            .take(limit)
+            .map { it.first }
+            .toList()
+    }
 }
+
+fun suggest(query: String, options: Collection<String>, limit: Int = 6): List<String> =
+    SuggestIndex(options).query(query, limit)
 
 /** Aceita "12,5" ou "12.5"; vazio = null; fora da faixa = inválido. */
 fun parseDecimal(text: String, max: Double? = null): Result<Double?> {
     val t = text.trim().replace(',', '.')
     if (t.isEmpty()) return Result.success(null)
-    val v = t.toDoubleOrNull() ?: return Result.failure(IllegalArgumentException("Número inválido"))
+    // "NaN" e "Infinity" passam no toDoubleOrNull, mas não cabem no JSON e travariam a exportação
+    val v = t.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return Result.failure(IllegalArgumentException("Número inválido"))
     if (v < 0 || (max != null && v > max)) return Result.failure(IllegalArgumentException("Use de 0 a ${max?.let { formatNumber(it) } ?: "∞"}"))
     return Result.success(v)
 }

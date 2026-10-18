@@ -12,6 +12,12 @@ const val INBOX_VERSION = 1
 const val CATALOG_FORMAT = "gameroom-catalog"
 const val CATALOG_VERSION = 1
 
+// Limites do gameroom-inbox v1: acima deles o GameRoom rejeita o evento (ou o pacote, no caso de MAX_EVENTS)
+const val MAX_TITLE = 200
+const val MAX_PLATFORM = 100
+const val MAX_NOTES = 5000
+const val MAX_EVENTS = 5000
+
 val contractJson = Json {
     ignoreUnknownKeys = true   // campos novos do GameRoom não quebram o app
     explicitNulls = false      // opcionais ausentes não vão para o arquivo

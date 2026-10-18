@@ -29,7 +29,8 @@ class MainActivity : ComponentActivity() {
                         HomeScreen(vm) { id -> nav.navigate("game/$id") }
                     }
                     composable("game/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                        GameScreen(vm, entry.arguments!!.getLong("id")) { nav.popBackStack() }
+                        // Volta para a lista sem risco de desempilhar a própria lista (o jogo apagado também dispara a volta)
+                        GameScreen(vm, entry.arguments!!.getLong("id")) { nav.popBackStack("home", inclusive = false) }
                     }
                 }
             }

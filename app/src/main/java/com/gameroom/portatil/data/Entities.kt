@@ -36,6 +36,11 @@ data class EventEntity(
     val difficulty: Double? = null,
     val notes: String? = null,
     val exportedAt: Long? = null,  // null = ainda não foi para o GameRoom
+    // Platinado com zeramento em outro dia: vai ao GameRoom como um evento Zerado antes da platina
+    val finishDate: LocalDate? = null,
+    val finishUuid: String? = null,
+    // Quando passou a aguardar exportação (criação ou correção); null em bancos antigos = createdAt
+    val pendingSince: Long? = null,
 )
 
 @Entity(tableName = "catalog_games")
@@ -49,6 +54,14 @@ data class CatalogGameEntity(
 @Entity(tableName = "catalog_platforms")
 data class CatalogPlatformEntity(@PrimaryKey val name: String)
 
+/** Linha única com a origem do catálogo importado. */
+@Entity(tableName = "catalog_meta")
+data class CatalogMetaEntity(
+    @PrimaryKey val id: Int = 0,
+    val exportedAt: String?,  // exported_at do arquivo (ISO 8601), como veio do GameRoom
+    val importedAt: Long,
+)
+
 data class GameWithEvents(
     @Embedded val game: GameEntity,
     @Relation(parentColumn = "id", entityColumn = "gameId") val events: List<EventEntity>,
@@ -56,11 +69,17 @@ data class GameWithEvents(
     val sortedEvents: List<EventEntity> get() = events.sortedWith(compareBy({ it.date }, { it.createdAt }))
     val latest: EventEntity? get() = sortedEvents.lastOrNull()
     val pendingCount: Int get() = events.count { it.exportedAt == null }
+
+    /** Dia do zeramento mais recente registrado no app (Zerado, ou o zeramento de um Platinado). */
+    fun lastFinishDate(exceptEventId: Long? = null): LocalDate? = events.asSequence()
+        .filter { it.id != exceptEventId }
+        .mapNotNull { if (it.type == EventType.FINISHED) it.date else it.finishDate }
+        .maxOrNull()
 }
 
 class Converters {
-    @TypeConverter fun fromDate(d: LocalDate): Long = d.toEpochDay()
-    @TypeConverter fun toDate(v: Long): LocalDate = LocalDate.ofEpochDay(v)
+    @TypeConverter fun fromDate(d: LocalDate?): Long? = d?.toEpochDay()
+    @TypeConverter fun toDate(v: Long?): LocalDate? = v?.let(LocalDate::ofEpochDay)
     @TypeConverter fun fromType(t: EventType): String = t.wire
     @TypeConverter fun toType(v: String): EventType = EventType.fromWire(v)
 }

@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: APK assinado e GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags, para o link do changelog
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # O Android só instala uma atualização assinada com a mesma chave: sem ela, não publica nada
+      - name: Chave de release
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Segredos RELEASE_* ausentes; o APK sairia com a chave de debug."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > "$RUNNER_TEMP/signing.properties" <<PROPS
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+
+      - name: Versão do app confere com a tag
+        run: |
+          version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::versionName $version não confere com a tag $GITHUB_REF_NAME"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Testes e build do release
+        run: ./gradlew testDebugUnitTest assembleRelease -Pgameroomapp.signing="$RUNNER_TEMP/signing.properties"
+
+      - name: Conferir a assinatura
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          certs=$("$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk)
+          echo "$certs"
+          if echo "$certs" | grep -q "CN=Android Debug"; then echo "::error::APK assinado com a chave de debug"; exit 1; fi
+          if [ -n "$EXPECTED_CERT_SHA256" ]; then
+            echo "$certs" | grep -qi "SHA-256 digest: $EXPECTED_CERT_SHA256" || { echo "::error::Certificado diferente do esperado"; exit 1; }
+          fi
+
+      - name: Notas da versão (seção do CHANGELOG)
+        run: |
+          apk="GameRoomPortatil-$VERSION.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$apk"
+          prev=$(git tag --sort=-v:refname | grep -v "^$GITHUB_REF_NAME$" | head -1)
+          {
+            awk -v v="$VERSION" '/^## \[/{ if (found) exit; found = index($0, "[" v "]") > 0; next } found' CHANGELOG.md
+            echo "### Instalação"
+            echo "Baixe o \`$apk\` abaixo e abra no aparelho."
+            echo
+            echo "**SHA-256:** \`$(sha256sum "$apk" | cut -d' ' -f1)\`"
+            [ -n "$prev" ] && echo && echo "**Changelog completo:** https://github.com/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_REF_NAME"
+          } > notes.md
+          cat notes.md
+          echo "APK=$apk" >> "$GITHUB_ENV"
+
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$APK" --title "GameRoom Portátil $VERSION" --notes-file notes.md
+
+      - name: Apagar a chave do runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/signing.properties"

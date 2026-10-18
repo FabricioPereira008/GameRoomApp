@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Testes e build
+    name: Testes, lint e build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,12 +16,33 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Testes unitários (inclui validação contra os schemas do GameRoom)
+      - name: Testes unitários (domínio, Room, migrações e contrato com o GameRoom)
         run: ./gradlew testDebugUnitTest
-      - name: Build do APK de debug
-        run: ./gradlew assembleDebug
+      - name: Lint
+        run: ./gradlew lintDebug
+      - name: Build dos APKs (o release usa a chave de debug aqui; o R8 é exercitado do mesmo jeito)
+        run: ./gradlew assembleDebug assembleRelease
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-reports
-          path: app/build/reports/tests/
+          name: reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+
+  contracts:
+    name: Contratos em dia com o GameRoom
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: FabricioPereira008/GameRoomLog
+          path: gameroomlog
+      - name: Comparar a cópia dos schemas com o GameRoom (main)
+        run: |
+          ./scripts/sync-contracts.sh gameroomlog
+          if ! git diff --exit-code -- app/src/test/resources/contracts; then
+            echo "::error::Os contratos mudaram no GameRoom. Rode ./scripts/sync-contracts.sh e os testes."
+            exit 1
+          fi

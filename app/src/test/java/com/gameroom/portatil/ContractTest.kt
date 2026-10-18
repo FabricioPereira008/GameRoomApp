@@ -1,6 +1,5 @@
 package com.gameroom.portatil
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.gameroom.portatil.contract.CatalogFormatException
 import com.gameroom.portatil.contract.MAX_NOTES
 import com.gameroom.portatil.contract.MAX_PLATFORM
@@ -12,24 +11,26 @@ import com.gameroom.portatil.data.GameEntity
 import com.gameroom.portatil.data.GameWithEvents
 import com.gameroom.portatil.data.buildExport
 import com.gameroom.portatil.domain.EventType
-import com.networknt.schema.JsonSchemaFactory
-import com.networknt.schema.SpecVersion
+import com.networknt.schema.SchemaRegistry
+import com.networknt.schema.SpecificationVersion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import tools.jackson.databind.json.JsonMapper
 import java.time.LocalDate
 
 /** Mesmos schemas do GameRoom (docs/contracts), copiados para src/test/resources/contracts. */
 class ContractTest {
-    private val mapper = ObjectMapper()
+    private val mapper = JsonMapper()
+    private val registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12)
 
     private fun resource(path: String): String =
         javaClass.classLoader!!.getResource("contracts/$path")!!.readText()
 
     private fun errors(schemaFile: String, json: String): Set<String> {
-        val schema = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012).getSchema(resource(schemaFile))
+        val schema = registry.getSchema(resource(schemaFile))
         return schema.validate(mapper.readTree(json)).map { it.message }.toSet()
     }
 
@@ -62,18 +63,25 @@ class ContractTest {
     @Test
     fun exportedPackageShape() {
         val root = mapper.readTree(sample())
-        assertEquals("gameroom-inbox", root["format"].asText())
+        assertEquals("gameroom-inbox", root["format"].asString())
         assertEquals(1, root["version"].asInt())
         val events = root["events"]
-        assertEquals(listOf("u-1", "u-2", "u-3", "u-4z", "u-4"), events.map { it["id"].asText() })  // cronológico
-        assertEquals("finished", events[1]["type"].asText())
-        assertEquals("2026-10-12", events[1]["date"].asText())
+        assertEquals(listOf("u-1", "u-2", "u-3", "u-4z", "u-4"), events.toList().map { it["id"].asString() })  // cronológico
+        assertEquals("finished", events[1]["type"].asString())
+        assertEquals("2026-10-12", events[1]["date"].asString())
         assertEquals(38.0, events[1]["played_hours"].asDouble(), 0.0)
         assertEquals(7, events[1]["game_id"].asInt())
         // opcionais ausentes não são enviados como null
         assertFalse(events[2].has("platform"))
         assertFalse(events[2].has("game_id"))
         assertFalse(events[0].has("score"))
+    }
+
+    @Test
+    fun validatorRejectsWhatGameRoomRejects() {
+        // Garante que a validação de fato roda (uma troca de biblioteca não pode deixar tudo "válido")
+        val bad = """{"format":"gameroom-inbox","version":1,"events":[{"id":"x","type":"dropped","title":"","score":11}]}"""
+        assertTrue(errors("gameroom-inbox.v1.schema.json", bad).size >= 3)
     }
 
     @Test
@@ -113,11 +121,11 @@ class ContractTest {
     fun platinumWithEarlierFinishGoesAsFinishedThenPlatinum() {
         val events = mapper.readTree(sample())["events"]
         val (finish, platinum) = events[3] to events[4]
-        assertEquals("finished", finish["type"].asText())
-        assertEquals("2026-10-16", finish["date"].asText())
+        assertEquals("finished", finish["type"].asString())
+        assertEquals("2026-10-16", finish["date"].asString())
         assertFalse(finish.has("played_hours"))  // estatísticas só na platina
-        assertEquals("platinum", platinum["type"].asText())
-        assertEquals("2026-10-20", platinum["date"].asText())
+        assertEquals("platinum", platinum["type"].asString())
+        assertEquals("2026-10-20", platinum["date"].asString())
         assertEquals(20.0, platinum["played_hours"].asDouble(), 0.0)
     }
 

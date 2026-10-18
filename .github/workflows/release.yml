@@ -19,7 +19,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       # O Android só instala uma atualização assinada com a mesma chave: sem ela, não publica nada
       - name: Chave de release
